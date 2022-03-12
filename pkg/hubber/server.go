@@ -1,44 +1,46 @@
 package hubber
 
 import (
-	"context"
 	"net"
 	"runtime"
 
 	"github.com/sirupsen/logrus"
 )
 
-type ConnectionHandler interface {
-	HandleConnection(ctx context.Context, conn net.Conn)
-	CloneWithServices() ConnectionHandler
-}
-
-type Server struct {
+type server struct {
+	log        *logrus.Logger
 	port       string
 	listener   net.Listener
-	log        *logrus.Logger
+	gameCtrl   GameController
 	shouldStop bool
 }
 
-func NewServer(port string, logger *logrus.Logger) IServer {
-	return &Server{
-		port: port,
-		log:  logger,
+func NewServer(logger *logrus.Logger, port string, gameCtrl GameController) *server {
+	return &server{
+		log:      logger,
+		port:     port,
+		gameCtrl: gameCtrl,
 	}
 }
 
-func (s *Server) Run(handler IHandler) {
+func (s *server) Run() error {
 	defer func() {
 		if r := recover(); r != nil {
 			s.log.Warn("Recovered in server: ", r)
 		}
-		s.log.Info("Server has stopped...")
+		s.log.Info("server has stopped...")
 	}()
+
 	s.log.Infof("Starting server on port %s...", s.port)
-	s.loadListener()
+
+	err := s.loadListener()
+	if err != nil {
+		return err
+	}
+
 	for {
 		if s.shouldStop {
-			return
+			break
 		}
 		conn, err := s.listener.Accept()
 
@@ -52,20 +54,21 @@ func (s *Server) Run(handler IHandler) {
 				s.log.Fatal("Error during client conn attempt: ", err)
 			}
 		}
-		runClient(conn, s.log, handler)
-		s.log.Info("start new client...")
-		s.log.Info("Num of running gorutines: ", runtime.NumGoroutine())
+		s.gameCtrl.HandleClientConnection(NewClient(conn, s.log))
+		s.log.Info("Num of running goroutines: ", runtime.NumGoroutine())
 	}
+	return nil
 }
 
-func (s *Server) loadListener() {
+func (s *server) loadListener() error {
 	var err error
 	s.listener, err = net.Listen("tcp", ":"+s.port)
 	if err != nil {
 		s.log.Fatal(err)
 	}
+	return err
 }
 
-func (s *Server) Stop() {
+func (s *server) Stop() {
 	s.shouldStop = true
 }

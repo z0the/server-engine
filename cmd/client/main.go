@@ -1,15 +1,17 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"image/color"
 	_ "image/png"
 	"log"
 	"net"
-	"rpg/internal/game"
-	"rpg/internal/service"
-	"rpg/pkg/hubber"
+
+	"rpg/internal/server/api"
+	"rpg/internal/server/game"
+	"rpg/pkg/hubber_tmp"
 
 	"github.com/hajimehoshi/ebiten/v2"
 	"github.com/hajimehoshi/ebiten/v2/inpututil"
@@ -20,19 +22,21 @@ const (
 	screenHeight = 240
 )
 
-func init() {
-
-}
-
 type Tile struct {
 	*ebiten.Image
 	id   int64
 	x, y float64
 }
 
+func NewGame(connCtrl *connectionController) *Game {
+	g := &Game{
+		connCtrl: connCtrl,
+	}
+	// g.connCtrl.
+}
+
 type Game struct {
-	clientID   int64
-	conn       net.Conn
+	connCtrl   *connectionController
 	keys       []ebiten.Key
 	characters []*Tile
 }
@@ -69,7 +73,7 @@ func (g *Game) Update() error {
 }
 
 func (g *Game) sendMove(direction game.Direction) {
-	req := &hubber.Request{}
+	req := &hubber_tmp.Request{}
 	req.Action = "gameMove"
 	data := &game.MoveData{
 		Direction: direction,
@@ -92,8 +96,7 @@ func (g *Game) Layout(outsideWidth, outsideHeight int) (int, int) {
 }
 
 func (g *Game) listenServer() {
-	//time.Sleep(5 * time.Second)
-	resp := &hubber.Response{}
+	resp := &hubber_tmp.Response{}
 	dec := json.NewDecoder(g.conn)
 	if err := dec.Decode(resp); err != nil {
 		if e, ok := err.(*json.SyntaxError); ok {
@@ -110,32 +113,25 @@ func (g *Game) listenServer() {
 	fmt.Println("Got clientID: ", ID.ID)
 	g.clientID = ID.ID
 	for {
-		//var data []byte
-		//_, err := g.conn.Read(data)
-		//if err != nil {
-		//	log.Fatal(err)
-		//}
-		//fmt.Println("data: ", data)
-		resp := &hubber.Response{}
+		resp := &hubber_tmp.Response{}
 		if err := dec.Decode(resp); err != nil {
 			if e, ok := err.(*json.SyntaxError); ok {
 				log.Printf("syntax error at byte offset %d", e.Offset)
 			}
 			continue
 		}
-		//fmt.Println("Received in game: ", resp)
 		g.handleResponse(resp)
 	}
 }
 
-func (g *Game) sendToServer(req hubber.IRequest) {
+func (g *Game) sendToServer(req hubber_tmp.IRequest) {
 	enc := json.NewEncoder(g.conn)
 	if err := enc.Encode(req); err != nil {
 		log.Fatal(err)
 	}
 }
 
-func (g *Game) handleResponse(resp hubber.IResponse) {
+func (g *Game) handleResponse(resp hubber_tmp.IResponse) {
 	switch resp.GetAction() {
 	case "gameState":
 		data := &game.StateData{}
@@ -151,15 +147,14 @@ func (g *Game) handleResponse(resp hubber.IResponse) {
 				}
 			}
 			if !found {
-				g.initChar(char)
+				g.initCharacter(char)
 				return
 			}
 		}
 	}
 }
 
-func (g *Game) initChar(data *game.Player) {
-
+func (g *Game) initCharacter(data *game.Player) {
 	img := ebiten.NewImage(20, 20)
 	img.Fill(color.RGBA{R: data.ColorRGBA[0], G: data.ColorRGBA[1], B: data.ColorRGBA[2], A: data.ColorRGBA[3]})
 	newPlayer := &Tile{
@@ -178,21 +173,38 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	go listenConn(conn)
 
-	ebiten.SetWindowSize(screenWidth*2, screenHeight*2)
-	ebiten.SetWindowTitle("Keyboard (Ebiten Demo)")
-	newGame := &Game{
-		conn: conn,
+	enc := json.NewEncoder(conn)
+
+	req, err := api.NewBaseRequest(
+		api.RegistrationReqType,
+		api.RegistrationPayload{
+			Login:    "zothe",
+			Password: "123456",
+		},
+	)
+	if err != nil {
+		panic(err)
 	}
-	roomData := &service.RoomData{
-		GameType:  "default",
-		IsPrivate: false,
+
+	// time.Sleep(time.Second * 4)
+	err = enc.Encode(req)
+	if err != nil {
+		panic(err)
 	}
-	req := &hubber.Request{Action: "joinRoom"}
-	req.WriteData(roomData)
-	newGame.sendToServer(req)
-	newGame.Init()
-	if err := ebiten.RunGame(newGame); err != nil {
-		log.Fatal(err)
-	}
+	fmt.Println("Send request")
+
+	// ebiten.SetWindowSize(screenWidth*2, screenHeight*2)
+	// ebiten.SetWindowTitle("Simple Game")
+	// newGame := &Game{
+	// 	conn: conn,
+	// }
+
+	// newGame.sendToServer(req)
+	// newGame.Init()
+	// if err := ebiten.RunGame(newGame); err != nil {
+	// 	log.Fatal(err)
+	// }
+	<-context.Background().Done()
 }

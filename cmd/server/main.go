@@ -2,11 +2,12 @@ package main
 
 import (
 	"os"
-	"rpg/internal/handler"
-	"rpg/internal/service"
-	"rpg/pkg/hubber"
 
 	"github.com/sirupsen/logrus"
+
+	"rpg/internal/server/controller"
+	"rpg/internal/server/service"
+	"rpg/pkg/hubber"
 )
 
 func main() {
@@ -17,9 +18,11 @@ func main() {
 		FullTimestamp:    true,
 	})
 	logger.SetOutput(os.Stdout)
-	messagePipe := make(chan hubber.IResponse, 100)
-	srv := service.NewService(logger, messagePipe)
-	hdl := handler.NewHandler(logger, messagePipe, srv)
-	app := hubber.NewServer("3000", logger)
-	app.Run(hdl)
+	srv := service.NewService(logger)
+	ctrl := controller.NewController(logger, srv)
+	app := hubber.NewServer(logger, "3000", ctrl)
+	err := app.Run()
+	if err != nil {
+		logger.WithField("err", err).Error("failed to run app")
+	}
 }

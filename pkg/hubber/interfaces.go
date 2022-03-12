@@ -1,32 +1,30 @@
 package hubber
 
-type IServer interface {
-	Run(handler IHandler)
-	Stop()
+type GameController interface {
+	// HandleClientConnection - when called should register client connection in system,
+	// and then call the ClientConnection.Run() method
+	HandleClientConnection(client ClientConnection)
+	// Handle(msg interface{})
 }
 
-type IHandler interface {
-	Register(client IClient) int64
-	Unregister(id int64)
-	Handle(request IRequest)
+type ServerConnection interface {
+	Run(syncChan, asyncChan <-chan []byte)
+	Send(msg Message)
 }
 
-type IClient interface {
+type ClientConnection interface {
+	// Run - should start listen and send pumps
+	// requestChan - is a chan to which client should sends msgs received from low level connection
+	// connectionIsDeadChan - is a chan to which the client should sends its uid when connection becomes dead.
+	Run(connUID string, requestChan chan<- Message)
+	// Kill - should stops all client serving goroutines and notify the connectionIsDeadChan.
 	Kill()
-	Send(resp IResponse)
+	AsyncSend(msg []byte)
+	GetLastRequestNumber() uint
+	// Send(msg []byte)
 }
 
-type IResponse interface {
-	SetReceiverID(id int64)
-	ReceiverID() int64
-	GetAction() string
-	ParseData(pointer interface{})
-	WriteData(pointer interface{})
-}
-
-type IRequest interface {
-	SenderID() int64
-	GetAction() string
-	ParseData(pointer interface{})
-	WriteData(pointer interface{})
+type Message interface {
+	GetConnUID() string
+	GetRawData() []byte
 }
