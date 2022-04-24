@@ -10,7 +10,7 @@ type ServerMessage struct {
 	Payload        []byte `json:"payload"`
 }
 
-func NewBaseRequest(reqType RequestType, payload interface{}) (*BaseRequest, error) {
+func NewBaseRequest(reqType RequestType, payload any) (*BaseRequest, error) {
 	baseReq := &BaseRequest{ReqType: reqType}
 	err := baseReq.EncodeJSONPayload(payload)
 	if err != nil {
@@ -45,7 +45,7 @@ func (r *BaseRequest) RequestTypeCode() string {
 	return r.ReqType.String()
 }
 
-func (r *BaseRequest) EncodeJSONPayload(payload interface{}) error {
+func (r *BaseRequest) EncodeJSONPayload(payload any) error {
 	if len(r.Payload) != 0 {
 		return errors.New("Payload is not empty")
 	}
@@ -59,7 +59,7 @@ func (r *BaseRequest) EncodeJSONPayload(payload interface{}) error {
 
 // DecodeJSONPayload - parse byte data from internal to targetPayload
 // targetPayload should be a pointer to a struct
-func (r *BaseRequest) DecodeJSONPayload(targetPayload interface{}) error {
+func (r *BaseRequest) DecodeJSONPayload(targetPayload any) error {
 	err := json.Unmarshal(r.Payload, targetPayload)
 	if err != nil {
 		return err
@@ -82,24 +82,35 @@ func (rt RequestType) Validate() error {
 	return ErrInvalidRequestType
 }
 
-const (
-	RegistrationReqType RequestType = "REGISTRATION"
-	LoginReqType        RequestType = "LOGIN"
-)
-
 func getAllRequestTypes() []RequestType {
-	return []RequestType{
-		RegistrationReqType,
-		LoginReqType,
-	}
+	return []RequestType{}
 }
 
-type RegistrationPayload struct {
-	Login    string
-	Password string
+type BaseResponse struct {
+	Success bool `json:"success"`
+	Data    any  `json:"data"`
 }
 
-type LoginPayload struct {
-	Login    string
-	Password string
+type RegistrationRequest struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
+type RegistrationResponse struct {
+	Token string `json:"token"`
+}
+
+type LoginRequest struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
+type LoginResponse struct {
+	Token string `json:"token"`
+}
+
+type JoinRoomRequest struct{}
+
+type JoinRoomResponse struct {
+	RoomUID string `json:"room_uid"`
 }

@@ -21,7 +21,7 @@ func (r *Request) GetAction() string {
 	return r.Action
 }
 
-func (r *Request) ParseData(pointer interface{}) {
+func (r *Request) ParseData(pointer any) {
 	if r.Data != nil {
 		if err := json.Unmarshal(r.Data, pointer); err != nil {
 			logrus.Error("Parsing error!")
@@ -32,7 +32,7 @@ func (r *Request) ParseData(pointer interface{}) {
 	}
 }
 
-func (r *Request) WriteData(pointer interface{}) {
+func (r *Request) WriteData(pointer any) {
 	raw, err := json.Marshal(pointer)
 	r.Data = raw
 	if err != nil {

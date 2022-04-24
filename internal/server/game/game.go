@@ -9,13 +9,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type Game struct {
-	logger     *logrus.Logger
-	characters []*Player
-	events     chan hubber_tmp.IRequest
-	msgPipe    chan<- hubber_tmp.IResponse
-}
-
 func NewGame(logger *logrus.Logger, characters []*Player, msgPipe chan<- hubber_tmp.IResponse) *Game {
 	return &Game{
 		logger:     logger,
@@ -25,12 +18,19 @@ func NewGame(logger *logrus.Logger, characters []*Player, msgPipe chan<- hubber_
 	}
 }
 
+type Game struct {
+	logger     *logrus.Logger
+	characters []*Player
+	events     chan hubber_tmp.IRequest
+	msgPipe    chan<- hubber_tmp.IResponse
+}
+
 func (g *Game) HandleRequest(event hubber_tmp.IRequest) {
 	g.events <- event
 }
 
 func (g *Game) Start() {
-	//g.init()
+	// g.init()
 	go g.updater()
 	go g.mainLoop()
 	go g.observer()
@@ -123,7 +123,7 @@ func (g *Game) updater() {
 
 type Event struct {
 	Type string
-	Data interface{}
+	Data any
 }
 
 type StateData struct {
@@ -143,7 +143,7 @@ func (g *Game) sendGameState() {
 	}
 }
 
-//PlayerData - is used for send to client
+// PlayerData - is used for send to client
 type PlayerData struct {
 	OwnerID   int64
 	ColorRGBA [4]uint8

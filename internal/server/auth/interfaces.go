@@ -1,6 +1,7 @@
 package auth
 
 type Service interface {
-	RegisterNewUser(login, password string) (*User, error)
-	LoginUser(login, password string) (*User, error)
+	ParseClaims(bearerToken string) (DefaultClaims, error)
+	RegisterNewUser(login, password string) (string, error)
+	LoginUser(login, password string) (string, error)
 }

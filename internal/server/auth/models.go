@@ -1,5 +1,7 @@
 package auth
 
+import "github.com/dgrijalva/jwt-go"
+
 type User struct {
 	UID   string
 	Nick  string
@@ -20,4 +22,10 @@ func (u *loginUser) User() *User {
 		Nick:  u.Nick,
 		Coins: u.Coins,
 	}
+}
+
+type DefaultClaims struct {
+	jwt.StandardClaims
+	UserUID string `json:"user_uid"`
+	Login   string `json:"login"`
 }

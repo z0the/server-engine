@@ -1,15 +1,21 @@
 package auth
 
 import (
+	"fmt"
+	"strings"
 	"sync"
+	"time"
 
+	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
+
+	"rpg/internal/server/utils"
 )
 
-//nolint:gochecknoglobals
-
-func NewAuthService() Service {
+func NewAuthService(lg *logrus.Logger) Service {
 	return &authService{
+		lg:        lg,
 		loginData: make(map[string]*loginUser),
 		takenUIDs: make(map[string]struct{}),
 	}
@@ -17,20 +23,39 @@ func NewAuthService() Service {
 
 type authService struct {
 	sync.Mutex
+	lg        *logrus.Logger
 	loginData map[string]*loginUser
 	takenUIDs map[string]struct{}
 }
 
-func (s *authService) RegisterNewUser(login, password string) (*User, error) {
+const jwtSecret = "123456"
+
+func (s *authService) ParseClaims(bearerToken string) (DefaultClaims, error) {
+	jwtToken := strings.TrimPrefix(bearerToken, "Bearer ")
+	parsedClaims := DefaultClaims{}
+	_, err := jwt.ParseWithClaims(
+		jwtToken, &parsedClaims, func(token *jwt.Token) (interface{}, error) {
+			return []byte(jwtSecret), nil
+		},
+	)
+	if err != nil {
+		return DefaultClaims{}, err
+	}
+	fmt.Println(parsedClaims.Login)
+
+	return parsedClaims, nil
+}
+
+func (s *authService) RegisterNewUser(login, password string) (string, error) {
 	s.Lock()
 	defer s.Unlock()
 
 	_, alreadyRegistered := s.loginData[login]
 	if alreadyRegistered {
-		return nil, ErrUserWithSameLoginAlreadyRegistered
+		return utils.EmptyString, ErrUserWithSameLoginAlreadyRegistered
 	}
 
-	lu := &loginUser{
+	lu := loginUser{
 		UID:      s.getNewUID(),
 		Login:    login,
 		Password: password,
@@ -38,21 +63,22 @@ func (s *authService) RegisterNewUser(login, password string) (*User, error) {
 		Coins:    0,
 	}
 
-	s.loginData[lu.Login] = lu
+	s.loginData[lu.Login] = &lu
 	s.takenUIDs[lu.UID] = struct{}{}
 
-	return lu.User(), nil
+	return s.makeJWTToken(lu)
 }
 
-func (s *authService) LoginUser(login, password string) (*User, error) {
+func (s *authService) LoginUser(login, password string) (string, error) {
 	lu, userExists := s.loginData[login]
 	if !userExists {
-		return nil, ErrUserDoesNotExist
+		return utils.EmptyString, ErrUserDoesNotExist
 	}
 	if lu.Password != password {
-		return nil, ErrWrongPassword
+		return utils.EmptyString, ErrWrongPassword
 	}
-	return lu.User(), nil
+
+	return s.makeJWTToken(*lu)
 }
 
 // getNewUID returns first free uid for loginData
@@ -63,4 +89,24 @@ func (s *authService) getNewUID() string {
 		return s.getNewUID()
 	}
 	return newUID
+}
+
+func (s *authService) makeJWTToken(lu loginUser) (string, error) {
+	token := jwt.NewWithClaims(
+		jwt.SigningMethodHS256,
+		DefaultClaims{
+			StandardClaims: jwt.StandardClaims{
+				ExpiresAt: time.Now().Add(time.Hour).Unix(),
+				IssuedAt:  time.Now().Unix(),
+			},
+			Login:   lu.Login,
+			UserUID: lu.UID,
+		},
+	)
+
+	signedToken, err := token.SignedString([]byte(jwtSecret))
+	if err != nil {
+		return "", err
+	}
+	return signedToken, nil
 }

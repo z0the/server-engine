@@ -53,7 +53,7 @@ func (s *Server) Run(handler IHandler) {
 				s.log.Fatal("Error during client conn attempt: ", err)
 			}
 		}
-		// runClient(conn, s.log, controller)
+		// runClient(conn, s.log, async_controller)
 		fmt.Println(conn)
 		s.log.Info("start new client...")
 		s.log.Info("Num of running gorutines: ", runtime.NumGoroutine())

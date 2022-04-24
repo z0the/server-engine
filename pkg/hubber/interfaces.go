@@ -4,7 +4,7 @@ type GameController interface {
 	// HandleClientConnection - when called should register client connection in system,
 	// and then call the ClientConnection.Run() method
 	HandleClientConnection(client ClientConnection)
-	// Handle(msg interface{})
+	// Handle(msg any)
 }
 
 type ServerConnection interface {

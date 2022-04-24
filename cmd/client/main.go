@@ -179,7 +179,7 @@ func main() {
 
 	req, err := api.NewBaseRequest(
 		api.RegistrationReqType,
-		api.RegistrationPayload{
+		api.RegistrationRequest{
 			Login:    "zothe",
 			Password: "123456",
 		},

@@ -20,13 +20,13 @@ type IResponse interface {
 	SetReceiverID(id int64)
 	ReceiverID() int64
 	GetAction() string
-	ParseData(pointer interface{})
-	WriteData(pointer interface{})
+	ParseData(pointer any)
+	WriteData(pointer any)
 }
 
 type IRequest interface {
 	SenderID() int64
 	GetAction() string
-	ParseData(pointer interface{})
-	WriteData(pointer interface{})
+	ParseData(pointer any)
+	WriteData(pointer any)
 }
