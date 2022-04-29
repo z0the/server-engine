@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net"
 
-	"rpg/internal/server/api"
+	"rpg/internal/server/async_controller/asyncapi"
 )
 
 func NewServerConnection(conn net.Conn) *serverConnection {
@@ -26,14 +26,11 @@ func (sc *serverConnection) listenConn() {
 	decoder := json.NewDecoder(sc.conn)
 
 	for {
-		msg := new(api.ServerMessage)
+		msg := new(asyncapi.ServerMessage)
 		err := decoder.Decode(msg)
 		if err != nil {
 			panic(err)
 		}
 		fmt.Println("response: ", msg)
-		if msg.IsSyncResponse {
-
-		}
 	}
 }

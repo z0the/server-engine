@@ -9,7 +9,7 @@ type Endpoint func(ctx context.Context, request any) (any, error)
 
 type EpWrapper struct {
 	Endpoint
-	RequestType reflect.Type
+	PayloadType reflect.Type
 	Description string
 }
 

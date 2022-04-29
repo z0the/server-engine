@@ -10,24 +10,36 @@ import (
 	"reflect"
 	"sync"
 
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 
-	"rpg/internal/server/api"
+	"rpg/internal/server/auth"
+	cerrors "rpg/internal/server/custom_errors"
 	"rpg/internal/server/matchmaker"
+	"rpg/internal/server/sync_controller/syncapi"
 	"rpg/internal/server/utils"
 )
 
-func NewController(logger *logrus.Logger, services *matchmaker.Services) *Controller {
+func NewController(
+	logger *zap.SugaredLogger,
+	auth auth.Service,
+	matchMaker matchmaker.Service,
+) *Controller {
 	hdl := &Controller{
-		lg:       logger,
-		services: services,
+		lg:         logger,
+		auth:       auth,
+		matchMaker: matchMaker,
 	}
 
 	hdl.handlers = map[string]EpWrapper{
 		registrationURL: {
 			Endpoint:    hdl.makeRegistrationEndpoint(),
-			RequestType: reflect.TypeOf(api.RegistrationRequest{}),
+			PayloadType: reflect.TypeOf(syncapi.RegistrationPayloadIN{}),
 			Description: "registration",
+		},
+		joinURL: {
+			Endpoint:    hdl.makeJoinRoomEndpoint(),
+			PayloadType: reflect.TypeOf(syncapi.JoinRoomPayloadIN{}),
+			Description: "join room",
 		},
 	}
 
@@ -36,20 +48,22 @@ func NewController(logger *logrus.Logger, services *matchmaker.Services) *Contro
 
 type Controller struct {
 	sync.Mutex
-	lg       *logrus.Logger
-	services *matchmaker.Services
-	handlers map[string]EpWrapper
+	lg         *zap.SugaredLogger
+	auth       auth.Service
+	matchMaker matchmaker.Service
+	handlers   map[string]EpWrapper
 }
 
 func (c *Controller) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	enc := json.NewEncoder(w)
 	ctx := r.Context()
 
+	c.lg.Info("Handle request...")
 	handleError := makeHandleErrorFunc(w, enc, c.lg)
 
 	bearerToken := r.Header.Get("Authorization")
 	if bearerToken != utils.EmptyString {
-		claims, err := c.services.Auth.ParseClaims(bearerToken)
+		claims, err := c.auth.ParseClaims(bearerToken)
 		if err != nil {
 			handleError(err)
 			return
@@ -65,7 +79,7 @@ func (c *Controller) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		handleError(errors.New("unknown method " + r.URL.Path))
 		return
 	}
-	requestPointer := reflect.New(epWrapper.RequestType).Interface()
+	requestPointer := reflect.New(epWrapper.PayloadType).Interface()
 
 	dec := json.NewDecoder(r.Body)
 	defer r.Body.Close()
@@ -87,20 +101,20 @@ func (c *Controller) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	err = enc.Encode(
-		api.BaseResponse{
+		syncapi.BaseResponse{
 			Success: true,
 			Data:    res,
 		},
 	)
 	if err != nil {
-		c.lg.WithError(err).Warn("Failed to encode response")
+		c.lg.Warnw("failed to encode response", "err", err)
 		return
 	}
 }
 
-func makeHandleErrorFunc(w http.ResponseWriter, enc *json.Encoder, lg *logrus.Logger) func(errResp error) {
+func makeHandleErrorFunc(w http.ResponseWriter, enc *json.Encoder, lg *zap.SugaredLogger) func(errResp error) {
 	return func(errResp error) {
-		resp := &api.BaseResponse{
+		resp := &syncapi.BaseResponse{
 			Success: false,
 		}
 		var status int
@@ -113,11 +127,11 @@ func makeHandleErrorFunc(w http.ResponseWriter, enc *json.Encoder, lg *logrus.Lo
 
 			err := enc.Encode(resp)
 			if err != nil {
-				lg.WithError(err).Error("failed to encode error")
+				lg.Warnw("failed to encode error", "err", err)
 			}
 		}()
 
-		typedErr, ok := errResp.(api.ErrorResponse)
+		typedErr, ok := errResp.(cerrors.ErrorResponse)
 		if !ok {
 			resp.Data = errResp.Error()
 			return

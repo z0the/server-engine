@@ -6,48 +6,50 @@ import (
 	"net"
 	"sync"
 
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
-func NewClient(conn net.Conn, log *logrus.Logger) ClientConnection {
-	return &client{
-		conn:     conn,
-		log:      log,
-		sendChan: make(chan []byte, 4),
+func NewConnectionWrapper(
+	conn net.Conn,
+	log *zap.SugaredLogger,
+	readDelimiter rune,
+) ConnectionWrapper {
+	return &connectionWrapper{
+		conn:          conn,
+		readDelimiter: readDelimiter,
+		log:           log,
 	}
 }
 
-type client struct {
-	conn     net.Conn
-	isDead   bool
-	log      *logrus.Logger
-	sendChan chan []byte
-	uid      string
-	once     sync.Once
+type connectionWrapper struct {
+	conn          net.Conn
+	readDelimiter rune
+	isDead        bool
+	log           *zap.SugaredLogger
+	uid           string
+	once          sync.Once
 }
 
-func (c *client) Run(uid string, requestChan chan<- Message) {
-	c.uid = uid
-	go c.listenPump(requestChan)
-	go c.sendPump()
+func (c *connectionWrapper) StartReading(uid string, outChan chan<- Message) {
+	c.once.Do(
+		func() {
+			c.uid = uid
+			go c.connReader(outChan)
+		},
+	)
 }
 
-func (c *client) Kill() {
-	c.sendChan = nil
+func (c *connectionWrapper) Kill() {
 	if err := c.conn.Close(); err != nil {
 		c.log.Error(err)
 	}
 }
 
-func (c *client) GetLastRequestNumber() uint {
+func (c *connectionWrapper) GetLastRequestNumber() uint {
 	return 0
 }
 
-func (c *client) Send(msg []byte) {
-	panic("not implemented")
-}
-
-func (c *client) AsyncSend(msg []byte) {
+func (c *connectionWrapper) Send(msg []byte) {
 	go func() {
 		defer func() {
 			r := recover()
@@ -55,68 +57,46 @@ func (c *client) AsyncSend(msg []byte) {
 				c.log.Error("recovered in async send: ", r)
 			}
 		}()
-		if c.sendChan != nil {
-			c.sendChan <- msg
+
+		c.log.Info("sending...")
+		c.log.Info("msg: ", string(msg))
+		_, err := c.conn.Write(c.addDelimiter(msg))
+		if err != nil {
+			c.log.Errorw("failed to write message to conn", "err", err)
 		}
 	}()
 }
 
-func (c *client) sendClientIsDead() {
-	c.once.Do(
-		func() {
-			// c.connectionIsDeadChan <- c.uid
-		},
-	)
-}
+const DefaultReadConnDelimiter rune = '\n'
 
-const defaultReadConnDelimiter byte = '\n'
+func (c *connectionWrapper) addDelimiter(rawMsg []byte) []byte {
+	return append(rawMsg, byte(c.readDelimiter))
+}
 
 // nolint
 // TODO: Make gracefull shutdown for listen and send pump
-func (c *client) listenPump(requestChan chan<- Message) {
+func (c *connectionWrapper) connReader(outChan chan<- Message) {
 	defer func() {
 		c.log.Warn("Stop listen pump...")
 		err := c.conn.Close()
 		if err != nil {
 			c.log.Error(err)
 		}
-		// Closing the channel to stop the sending pump
-		// close(c.sendChan)
-		c.sendClientIsDead()
 	}()
+	c.log.Info("start reader...")
+
 	bufReader := bufio.NewReader(c.conn)
 	for {
 		if c.isDead {
 			break
 		}
 		c.log.Info("listening...")
-		rawReq, err := bufReader.ReadBytes(defaultReadConnDelimiter)
+		rawReq, err := bufReader.ReadBytes(byte(c.readDelimiter))
 		if err != nil {
 			c.log.Error(err)
 			break
 		}
 		fmt.Println("string Data:", string(rawReq))
-		requestChan <- NewMessage(c.uid, rawReq)
-	}
-}
-
-func (c *client) sendPump() {
-	defer func() {
-		c.log.Warn("Stop send pump...")
-		if err := c.conn.Close(); err != nil {
-			c.log.WithError(err).Error("failed to close connection")
-		}
-		c.sendClientIsDead()
-	}()
-
-	for msg := range c.sendChan {
-		if c.isDead {
-			break
-		}
-		c.log.Info("sending...")
-		_, err := c.conn.Write(msg)
-		if err != nil {
-			c.log.WithError(err).Error("failed to write message to conn")
-		}
+		outChan <- NewMessage(c.uid, rawReq)
 	}
 }

@@ -2,28 +2,38 @@ package async_controller
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/google/uuid"
 
-	"rpg/internal/server/api"
+	"go.uber.org/zap"
+
+	"rpg/internal/server/async_controller/asyncapi"
+	"rpg/internal/server/auth"
+	"rpg/internal/server/eventbus"
 	"rpg/internal/server/matchmaker"
 	"rpg/pkg/hubber"
-
-	"github.com/sirupsen/logrus"
 )
 
-func NewController(logger *logrus.Logger, services *matchmaker.Services) *Controller {
+func NewController(
+	logger *zap.SugaredLogger,
+	bus eventbus.Bus,
+	auth auth.Service,
+	matchMaker matchmaker.Service,
+) *Controller {
 	hdl := &Controller{
 		lg:                 logger,
-		services:           services,
-		handleRequestsChan: make(chan hubber.Message),
-		clientConns:        make(map[string]hubber.ClientConnection),
-		clientsRoom:        make(map[string]string),
+		bus:                bus,
+		auth:               auth,
+		matchMaker:         matchMaker,
+		clientMessagesChan: make(chan hubber.Message, 100),
+		conns:              make(map[string]*ClientConnWrapper),
 	}
 
-	hdl.handlers = map[string]func(baseReq *api.BaseRequest){
-		// api.RegistrationReqType.String(): hdl.registrationHandler,
+	hdl.handlers = map[string]Handler{
+		asyncapi.LoginMsgType: hdl.loginHandler,
 	}
 
 	go hdl.listenClientsRequests()
@@ -32,84 +42,153 @@ func NewController(logger *logrus.Logger, services *matchmaker.Services) *Contro
 }
 
 type Controller struct {
-	sync.Mutex
-	lg                 *logrus.Logger
-	services           *matchmaker.Services
-	handleRequestsChan chan hubber.Message
-	handlers           map[string]func(baseReq *api.BaseRequest)
-	clientConns        map[string]hubber.ClientConnection
-	clientsRoom        map[string]string
+	sync.RWMutex
+	lg                 *zap.SugaredLogger
+	bus                eventbus.Bus
+	auth               auth.Service
+	matchMaker         matchmaker.Service
+	clientMessagesChan chan hubber.Message
+	handlers           map[string]Handler
+	conns              map[string]*ClientConnWrapper
 }
 
-func (h *Controller) HandleClientConnection(client hubber.ClientConnection) {
+func (h *Controller) HandleClientConnection(clientConn hubber.ConnectionWrapper) {
 	h.Lock()
 	defer h.Unlock()
 
-	clientUID := uuid.NewString()
-	h.clientConns[clientUID] = client
-	h.lg.WithField("uid", clientUID).Info("handle new client")
-	client.Run(clientUID, h.handleRequestsChan)
+	connUID := uuid.NewString()
+	h.conns[connUID] = &ClientConnWrapper{
+		ConnectionWrapper: clientConn,
+	}
+	h.lg.Infow("handle new clientConn", "uid", connUID)
+	clientConn.StartReading(connUID, h.clientMessagesChan)
+
+	h.bus.SubscribeWithToPrefix(connUID, h.busRepeater)
+
+	h.sendMsgToClient(
+		connUID,
+		asyncapi.ServerConnectMsgType,
+		asyncapi.ServerConnectPayloadOUT{ConnectionUID: connUID},
+	)
+}
+
+func (h *Controller) busRepeater(msg eventbus.BusMsg) {
+	fmt.Println("Repeater")
+
+	_, isConnExists := h.conns[msg.RecipientConnUID]
+	if !isConnExists {
+		h.lg.Warnw("trying to send to not exists conn", "connUID", msg.RecipientConnUID)
+		return
+	}
+	h.sendMsgToClient(msg.RecipientConnUID, asyncapi.MsgType(msg.MsgType), msg.Payload)
 }
 
 func (h *Controller) clearClientConn(clientUID string) {
 	h.Lock()
 	defer h.Unlock()
 
-	if _, ok := h.clientConns[clientUID]; ok {
-		delete(h.clientConns, clientUID)
-		h.lg.WithField("uid", clientUID).Info("clear client")
+	if _, ok := h.conns[clientUID]; ok {
+		delete(h.conns, clientUID)
+		h.lg.Infow("clear client", "uid", clientUID)
+
 	}
 }
 
-func (h *Controller) handleRequestMsg(msg hubber.Message) {
-	req := new(api.BaseRequest)
-	err := json.Unmarshal(msg.GetRawData(), req)
-	req.SetConnUID(msg.GetConnUID())
+func (h *Controller) handleMsgFromClient(rawMsg hubber.Message) {
+	msg := asyncapi.BaseMessage{}
+	err := json.Unmarshal(rawMsg.GetRawData(), &msg)
 	if err != nil {
-		h.lg.WithField("err", err).Error("failed to unmarshal request")
+		h.lg.Errorw("failed to unmarshal request", "err", err)
 		return
 	}
 
-	err = req.Validate()
+	err = msg.Validate()
 	if err != nil {
-		h.lg.WithField("err", err).Error("validation failed")
+		h.lg.Errorw("validation failed", "err", err)
 		return
 	}
 
-	h.handlers[req.RequestTypeCode()](req)
+	payload, err := decodePayload(msg)
+	if err != nil {
+		h.lg.Errorw("validation failed", "err", err)
+		return
+	}
+
+	msg.SetConnUID(rawMsg.GetConnUID())
+
+	// result, err := h.handlers[msg.RequestTypeCode()](msg)
+	// if err != nil {
+	// 	h.sendMsgToClient(
+	// 		rawMsg.GetConnUID(),
+	// 		asyncapi.ErrorMsgType,
+	// 		asyncapi.ErrorPayloadOut{
+	// 			Description: err.Error(),
+	// 		},
+	// 	)
+	// 	return
+	// }
+	// if result == nil {
+	// 	return
+	// }
+
+	h.bus.PublishWithFromPrefix(
+		msg.GetConnUID(), eventbus.BusMsg{
+			RecipientConnUID: msg.GetConnUID(),
+			MsgType:          msg.MsgType.String(),
+			Payload:          payload,
+		},
+	)
+	// h.sendMsgToClient(
+	// 	rawMsg.GetConnUID(),
+	// 	msg.MsgType,
+	// 	result,
+	// )
+}
+
+func decodePayload(reqMsg asyncapi.BaseMessage) (any, error) {
+	switch reqMsg.MsgType {
+	case asyncapi.MoveMsgType:
+		var payload asyncapi.MovePayloadIN
+		err := reqMsg.DecodeJSONPayload(&payload)
+		if err != nil {
+			return nil, err
+		}
+		return payload, nil
+	default:
+		return nil, errors.New("unknown msg type")
+	}
 }
 
 func (h *Controller) listenClientsRequests() {
-	for msg := range h.handleRequestsChan {
-		go h.handleRequestMsg(msg)
+	for msg := range h.clientMessagesChan {
+		go h.handleMsgFromClient(msg)
 	}
 }
 
-// func (h *Controller) sendMessageToClient(msg hubber.IResponse) {
-// 	if client, ok := h.clientConns[msg.ReceiverID()]; ok {
-// 		client.Send(msg)
-// 		return
-// 	}
-// 	h.lg.Warn("Can't send message to client")
-// }
+func (h *Controller) sendMsgToClient(recipientConnID string, msgType asyncapi.MsgType, payload any) {
+	recipient, exists := h.conns[recipientConnID]
+	if !exists {
+		h.lg.Error("Recipient client connection does not exist")
+		return
+	}
 
-// func (h *Controller) proxyToRoom(req hubber.IRequest) {
-// 	if roomID, ok := h.clientsRoom[req.SenderID()]; ok {
-// 		if err := h.services.SendToGame(roomID, req); err != nil {
-// 			h.handleError(req.SenderID(), err.Error())
-// 		}
-// 	}
-// }
+	err := msgType.Validate()
+	if err != nil {
+		h.lg.Errorw("failed to validate request type from server message", "err", err)
+		return
+	}
 
-// func (h *Controller) handleError(receiverID int64, description string) {
-// 	h.lg.Error(description)
-// 	type Error struct {
-// 		description string
-// 	}
-// 	err := &Error{description: description}
-// 	var resp hubber.Response
-// 	resp.SetReceiverID(receiverID)
-// 	resp.Action = "Error"
-// 	resp.WriteData(err)
-// 	h.sendMessageToClient(&resp)
-// }
+	msg, err := asyncapi.NewBaseMessage(msgType, payload)
+	if err != nil {
+		h.lg.Errorw("failed to create baseMessage from server message", "err", err)
+		return
+	}
+
+	rawMsg, err := json.Marshal(msg)
+	if err != nil {
+		h.lg.Errorw("failed to marshal msg", "err", err)
+		return
+	}
+
+	recipient.Send(rawMsg)
+}

@@ -8,29 +8,30 @@ import (
 
 	"github.com/dgrijalva/jwt-go"
 	"github.com/google/uuid"
-	"github.com/sirupsen/logrus"
+
+	"go.uber.org/zap"
 
 	"rpg/internal/server/utils"
 )
 
-func NewAuthService(lg *logrus.Logger) Service {
-	return &authService{
+func NewAuthService(lg *zap.SugaredLogger) Service {
+	return &service{
 		lg:        lg,
 		loginData: make(map[string]*loginUser),
 		takenUIDs: make(map[string]struct{}),
 	}
 }
 
-type authService struct {
+type service struct {
 	sync.Mutex
-	lg        *logrus.Logger
+	lg        *zap.SugaredLogger
 	loginData map[string]*loginUser
 	takenUIDs map[string]struct{}
 }
 
 const jwtSecret = "123456"
 
-func (s *authService) ParseClaims(bearerToken string) (DefaultClaims, error) {
+func (s *service) ParseClaims(bearerToken string) (DefaultClaims, error) {
 	jwtToken := strings.TrimPrefix(bearerToken, "Bearer ")
 	parsedClaims := DefaultClaims{}
 	_, err := jwt.ParseWithClaims(
@@ -46,7 +47,7 @@ func (s *authService) ParseClaims(bearerToken string) (DefaultClaims, error) {
 	return parsedClaims, nil
 }
 
-func (s *authService) RegisterNewUser(login, password string) (string, error) {
+func (s *service) RegisterNewUser(login, password string) (string, error) {
 	s.Lock()
 	defer s.Unlock()
 
@@ -69,7 +70,7 @@ func (s *authService) RegisterNewUser(login, password string) (string, error) {
 	return s.makeJWTToken(lu)
 }
 
-func (s *authService) LoginUser(login, password string) (string, error) {
+func (s *service) LoginUser(login, password string) (string, error) {
 	lu, userExists := s.loginData[login]
 	if !userExists {
 		return utils.EmptyString, ErrUserDoesNotExist
@@ -82,7 +83,7 @@ func (s *authService) LoginUser(login, password string) (string, error) {
 }
 
 // getNewUID returns first free uid for loginData
-func (s *authService) getNewUID() string {
+func (s *service) getNewUID() string {
 	newUID := uuid.NewString()
 	_, isAlreadyExists := s.takenUIDs[newUID]
 	if isAlreadyExists {
@@ -91,7 +92,7 @@ func (s *authService) getNewUID() string {
 	return newUID
 }
 
-func (s *authService) makeJWTToken(lu loginUser) (string, error) {
+func (s *service) makeJWTToken(lu loginUser) (string, error) {
 	token := jwt.NewWithClaims(
 		jwt.SigningMethodHS256,
 		DefaultClaims{

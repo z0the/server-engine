@@ -4,22 +4,22 @@ import (
 	"net"
 	"runtime"
 
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
 type server struct {
-	log        *logrus.Logger
-	port       string
-	listener   net.Listener
-	gameCtrl   GameController
-	shouldStop bool
+	log            *zap.SugaredLogger
+	port           string
+	listener       net.Listener
+	connectionCtrl ConnectionController
+	shouldStop     bool
 }
 
-func NewServer(logger *logrus.Logger, port string, gameCtrl GameController) *server {
+func NewServer(logger *zap.SugaredLogger, port string, connCtrl ConnectionController) *server {
 	return &server{
-		log:      logger,
-		port:     port,
-		gameCtrl: gameCtrl,
+		log:            logger,
+		port:           port,
+		connectionCtrl: connCtrl,
 	}
 }
 
@@ -51,10 +51,10 @@ func (s *server) Run() error {
 					continue
 				}
 			default:
-				s.log.Fatal("Error during client conn attempt: ", err)
+				s.log.Fatal("Error during connectionWrapper conn attempt: ", err)
 			}
 		}
-		s.gameCtrl.HandleClientConnection(NewClient(conn, s.log))
+		s.connectionCtrl.HandleClientConnection(NewConnectionWrapper(conn, s.log, DefaultReadConnDelimiter))
 		s.log.Info("Num of running goroutines: ", runtime.NumGoroutine())
 	}
 	return nil

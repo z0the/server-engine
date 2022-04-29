@@ -2,13 +2,15 @@ package sync_controller
 
 import (
 	"context"
+	"errors"
 
-	"rpg/internal/server/api"
+	"rpg/internal/server/sync_controller/syncapi"
+	"rpg/internal/server/utils"
 )
 
 func (c *Controller) makeRegistrationEndpoint() func(ctx context.Context, rawReq any) (any, error) {
 	return func(ctx context.Context, rawReq any) (any, error) {
-		req, ok := rawReq.(api.RegistrationRequest)
+		req, ok := rawReq.(syncapi.RegistrationPayloadIN)
 		if !ok {
 			return nil, wrongReqType
 		}
@@ -22,24 +24,24 @@ func (c *Controller) makeRegistrationEndpoint() func(ctx context.Context, rawReq
 	}
 }
 
-func (c *Controller) registrationHandler(_ context.Context, req api.RegistrationRequest) (
-	api.RegistrationResponse,
+func (c *Controller) registrationHandler(_ context.Context, req syncapi.RegistrationPayloadIN) (
+	syncapi.RegistrationPayloadOUT,
 	error,
 ) {
 
-	signedToken, err := c.services.Auth.RegisterNewUser(req.Login, req.Password)
+	signedToken, err := c.auth.RegisterNewUser(req.Login, req.Password)
 	if err != nil {
-		return api.RegistrationResponse{}, err
+		return syncapi.RegistrationPayloadOUT{}, err
 	}
 
-	return api.RegistrationResponse{
+	return syncapi.RegistrationPayloadOUT{
 		Token: signedToken,
 	}, nil
 }
 
 func (c *Controller) makeLoginEndpoint() func(ctx context.Context, rawReq any) (any, error) {
 	return func(ctx context.Context, rawReq any) (any, error) {
-		req, ok := rawReq.(api.LoginRequest)
+		req, ok := rawReq.(syncapi.LoginPayloadIN)
 		if !ok {
 			return nil, wrongReqType
 		}
@@ -53,24 +55,24 @@ func (c *Controller) makeLoginEndpoint() func(ctx context.Context, rawReq any) (
 	}
 }
 
-func (c *Controller) loginHandler(_ context.Context, req api.LoginRequest) (
-	api.LoginResponse,
+func (c *Controller) loginHandler(_ context.Context, req syncapi.LoginPayloadIN) (
+	syncapi.LoginPayloadOUT,
 	error,
 ) {
 
-	signedToken, err := c.services.Auth.RegisterNewUser(req.Login, req.Password)
+	signedToken, err := c.auth.RegisterNewUser(req.Login, req.Password)
 	if err != nil {
-		return api.LoginResponse{}, err
+		return syncapi.LoginPayloadOUT{}, err
 	}
 
-	return api.LoginResponse{
+	return syncapi.LoginPayloadOUT{
 		Token: signedToken,
 	}, nil
 }
 
 func (c *Controller) makeJoinRoomEndpoint() func(ctx context.Context, rawReq any) (any, error) {
 	return func(ctx context.Context, rawReq any) (any, error) {
-		payload, ok := rawReq.(api.LoginRequest)
+		payload, ok := rawReq.(syncapi.JoinRoomPayloadIN)
 		if !ok {
 			return nil, wrongReqType
 		}
@@ -84,17 +86,22 @@ func (c *Controller) makeJoinRoomEndpoint() func(ctx context.Context, rawReq any
 	}
 }
 
-func (c *Controller) joinRoomHandler(_ context.Context, req api.LoginRequest) (
-	api.LoginResponse,
+func (c *Controller) joinRoomHandler(ctx context.Context, req syncapi.JoinRoomPayloadIN) (
+	syncapi.JoinRoomPayloadOUT,
 	error,
 ) {
-
-	signedToken, err := c.services.Auth.RegisterNewUser(req.Login, req.Password)
-	if err != nil {
-		return api.LoginResponse{}, err
+	userUID, ok := ctx.Value(utils.UIDKey).(string)
+	if !ok {
+		return syncapi.JoinRoomPayloadOUT{}, errors.New("no uid in ctx")
+	}
+	login, ok := ctx.Value(utils.LoginKey).(string)
+	if !ok {
+		return syncapi.JoinRoomPayloadOUT{}, errors.New("no login in ctx")
 	}
 
-	return api.LoginResponse{
-		Token: signedToken,
+	roomUID := c.matchMaker.JoinRoom(req.ConnectionUID, userUID, login)
+
+	return syncapi.JoinRoomPayloadOUT{
+		RoomUID: roomUID,
 	}, nil
 }

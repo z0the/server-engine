@@ -4,12 +4,10 @@ import (
 	"math/rand"
 	"time"
 
-	"rpg/pkg/hubber_tmp"
-
-	"github.com/sirupsen/logrus"
+	"go.uber.org/zap"
 )
 
-func NewGame(logger *logrus.Logger, characters []*Player, msgPipe chan<- hubber_tmp.IResponse) *Game {
+func NewGame(logger *zap.SugaredLogger, characters []*Player, msgPipe chan<- hubber_tmp.IResponse) *Game {
 	return &Game{
 		logger:     logger,
 		characters: characters,
@@ -19,7 +17,7 @@ func NewGame(logger *logrus.Logger, characters []*Player, msgPipe chan<- hubber_
 }
 
 type Game struct {
-	logger     *logrus.Logger
+	logger     *zap.SugaredLogger
 	characters []*Player
 	events     chan hubber_tmp.IRequest
 	msgPipe    chan<- hubber_tmp.IResponse
